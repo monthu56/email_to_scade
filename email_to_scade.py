@@ -1,10 +1,9 @@
 import imaplib
-from email import message_from_bytes  # Импортируем только необходимую функцию
-from email.header import decode_header
+from email import message_from_bytes
+from email.header import decode_header, make_header
 import requests
 import time
 from config import Config
-from base64 import b64encode
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from models import ProcessedEmail
@@ -23,6 +22,13 @@ def connect_to_email():
     return mail
 
 
+def decode_mime_words(s):
+    return ''.join(
+        word.decode(encoding or 'utf-8') if isinstance(word, bytes) else word
+        for word, encoding in decode_header(s)
+    )
+
+
 def fetch_emails(mail):
     # Получение UID всех уже обработанных писем
     processed_uids = {email.uid for email in session.query(ProcessedEmail).all()}
@@ -39,16 +45,14 @@ def fetch_emails(mail):
             # Получение тела письма
             status, msg_data = mail.uid('fetch', uid, "(RFC822)")
             raw_email = msg_data[0][1]
-            msg = message_from_bytes(raw_email)  # Используем явный импорт message_from_bytes
+            msg = message_from_bytes(raw_email)
 
             # Декодирование заголовков
-            subject, encoding = decode_header(msg["Subject"])[0]
-            if isinstance(subject, bytes):
-                subject = subject.decode(encoding if encoding else 'utf-8')
-
-            from_ = msg.get("From")
+            subject = decode_mime_words(msg["Subject"])
+            from_ = decode_mime_words(msg.get("From"))
 
             # Извлечение тела письма
+            body = ""
             if msg.is_multipart():
                 for part in msg.walk():
                     content_type = part.get_content_type()
@@ -60,11 +64,15 @@ def fetch_emails(mail):
             else:
                 body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
 
+            # Получение даты
+            date = msg.get("Date")
+
             emails.append({
                 "uid": uid_str,
                 "subject": subject,
                 "from": from_,
-                "body": body
+                "body": body,
+                "date": date
             })
 
     return emails
@@ -88,7 +96,8 @@ def prepare_scade_data(email_data):
                 "data": {
                     "subject": email_data["subject"],
                     "from": email_data["from"],
-                    "body": email_data["body"]
+                    "body": email_data["body"],
+                    "date": email_data["date"]
                 }
             }
         }
@@ -98,14 +107,13 @@ def prepare_scade_data(email_data):
 
 def send_to_scade(scade_data):
     # Подготовка заголовков для запроса
-    auth_token = {Config.API_TOKEN}
     headers = {
         'Content-Type': 'application/json',
-        "Authorization": f"Basic {auth_token}"
+        "Authorization": f"Basic {Config.API_TOKEN}"
     }
 
     # Отправка данных на Scade API
-    response = requests.post(Config.SCADE_API_URL, headers=headers, json=scade_data)  # Убраны круглые скобки
+    response = requests.post(Config.SCADE_API_URL, headers=headers, json=scade_data)
     if response.status_code == 200:
         task_id = response.json().get("id")
         return task_id
@@ -117,9 +125,8 @@ def send_to_scade(scade_data):
 def get_scade_result(task_id):
     # Получение результата выполнения флоу
     result_url = f"https://api.scade.pro/api/v1/task/{task_id}"
-    auth_token = {Config.API_TOKEN}
     headers = {
-        "Authorization": f"Basic {auth_token}"
+        "Authorization": f"Basic {Config.API_TOKEN}"
     }
 
     response = requests.get(result_url, headers=headers)
@@ -130,12 +137,28 @@ def get_scade_result(task_id):
         return None
 
 
-def save_result_to_file(task_id, result):
-    # Сохранение результата в текстовый файл
-    filename = f"scade_result_{task_id}.txt"
-    with open(filename, 'w') as file:
-        file.write(f"Task ID: {task_id}\n")
-        file.write(f"Result: {result}\n")
+def save_result_to_html(task_id, email_data):
+    # Форматирование данных в читаемый HTML формат
+    html_content = f"""
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>Scade Result - Task ID: {task_id}</title>
+    </head>
+    <body>
+        <h1>Scade Task Result</h1>
+        <p><strong>Task ID:</strong> {task_id}</p>
+        <p><strong>От:</strong> {email_data['from']}</p>
+        <p><strong>Тема:</strong> {email_data['subject']}</p>
+        <p><strong>Дата:</strong> {email_data['date']}</p>
+        <p><strong>Содержимое:</strong></p>
+        <pre>{email_data['body']}</pre>
+    </body>
+    </html>
+    """
+    filename = f"scade_result_{task_id}.html"
+    with open(filename, 'w', encoding='utf-8') as file:
+        file.write(html_content)
     print(f"Result saved to {filename}")
 
 
@@ -155,7 +178,7 @@ def main():
                     time.sleep(5)  # Задержка перед запросом результата
                     result = get_scade_result(task_id)
                     if result:
-                        save_result_to_file(task_id, result)
+                        save_result_to_html(task_id, email_data)
 
                     # Сохранение UID после успешной отправки
                     save_processed_uid(email_data['uid'])
