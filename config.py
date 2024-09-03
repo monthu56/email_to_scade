@@ -2,7 +2,7 @@
 
 class Config:
     IMAP_SERVER = 'imap.yandex.ru'
-    EMAIL_ACCOUNT = '*********@yandex.ru'
+    EMAIL_ACCOUNT = '**********@yandex.ru'
     PASSWORD = '*************'
     CHECK_INTERVAL = 60  # Интервал проверки почты в секундах
 
