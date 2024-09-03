@@ -98,14 +98,14 @@ def prepare_scade_data(email_data):
 
 def send_to_scade(scade_data):
     # Подготовка заголовков для запроса
-    auth_token = b64encode(f"{Config.API_TOKEN}:".encode()).decode("ascii")
+    auth_token = {Config.API_TOKEN}
     headers = {
         'Content-Type': 'application/json',
         "Authorization": f"Basic {auth_token}"
     }
 
     # Отправка данных на Scade API
-    response = requests.post(Config.SCADE_API_URL, headers=headers, json=scade_data)
+    response = requests.post(Config.SCADE_API_URL, headers=headers, json=scade_data)  # Убраны круглые скобки
     if response.status_code == 200:
         task_id = response.json().get("id")
         return task_id
@@ -117,7 +117,7 @@ def send_to_scade(scade_data):
 def get_scade_result(task_id):
     # Получение результата выполнения флоу
     result_url = f"https://api.scade.pro/api/v1/task/{task_id}"
-    auth_token = b64encode(f"{Config.API_TOKEN}:".encode()).decode("ascii")
+    auth_token = {Config.API_TOKEN}
     headers = {
         "Authorization": f"Basic {auth_token}"
     }
