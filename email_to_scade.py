@@ -1,8 +1,9 @@
 import imaplib
 from email import message_from_bytes
-from email.header import decode_header, make_header
+from email.header import decode_header
 import requests
 import time
+import json
 from config import Config
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
@@ -85,36 +86,34 @@ def save_processed_uid(uid):
     session.commit()
 
 
-def prepare_scade_data(email_data):
-    # Преобразование данных письма в формат JSON для Scade
-    scade_data = {
+def send_to_scade(email_data):
+    # Сериализация данных для Scade API
+    payload = json.dumps({
         "start_node_id": Config.START_NODE_ID,
         "end_node_id": Config.END_NODE_ID,
         "result_node_id": Config.RESULT_NODE_ID,
         "node_settings": {
             Config.START_NODE_ID: {
                 "data": {
-                    "subject": email_data["subject"],
                     "from": email_data["from"],
+                    "subject": email_data["subject"],
                     "body": email_data["body"],
                     "date": email_data["date"]
                 }
             }
         }
-    }
-    return scade_data
+    })
 
-
-def send_to_scade(scade_data):
-    # Подготовка заголовков для запроса
     headers = {
-        'Content-Type': 'application/json',
-        "Authorization": f"Basic {Config.API_TOKEN}"
+        'Authorization': f'Basic {Config.API_TOKEN}',
+        'Content-Type': 'application/json'
     }
 
-    # Отправка данных на Scade API
-    response = requests.post(Config.SCADE_API_URL, headers=headers, json=scade_data)
+    # Отправка POST запроса для запуска флоу
+    response = requests.post(Config.SCADE_API_URL, headers=headers, data=payload)
+
     if response.status_code == 200:
+        # Возвращаем task_id для последующего запроса
         task_id = response.json().get("id")
         return task_id
     else:
@@ -123,34 +122,53 @@ def send_to_scade(scade_data):
 
 
 def get_scade_result(task_id):
-    # Получение результата выполнения флоу
+    # Получение результата выполнения флоу по task_id
     result_url = f"https://api.scade.pro/api/v1/task/{task_id}"
     headers = {
         "Authorization": f"Basic {Config.API_TOKEN}"
     }
 
-    response = requests.get(result_url, headers=headers)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        print(f"Failed to get flow result. Status code: {response.status_code}, Response: {response.text}")
-        return None
+    while True:
+        response = requests.get(result_url, headers=headers)
+        if response.status_code == 200:
+            result_data = response.json()
+            status = result_data.get("status")
+
+            # Если задача завершена, возвращаем результат
+            if status == 3:  # Статус 3 указывает на завершение задачи
+                return result_data  # Возвращаем весь результат
+            else:
+                print(f"Task {task_id} is still running... Waiting for result.")
+                time.sleep(5)  # Задержка перед повторным запросом
+        else:
+            print(f"Failed to get flow result. Status code: {response.status_code}, Response: {response.text}")
+            return None
 
 
 def save_result_to_html(task_id, scade_response):
-    # Извлечение нужных данных из ответа Scade
-    node_data = scade_response['data']['node_settings'][Config.START_NODE_ID]['data']
+    # Проверка наличия данных в ответе
+    if scade_response is None:
+        print(f"No result data found for task ID: {task_id}.")
+        return
 
-    from_ = node_data.get("from", "N/A")
-    subject = node_data.get("subject", "N/A")
-    body = node_data.get("body", "N/A")
-    date = node_data.get("date", "N/A")
+    # Попытка извлечь данные из 'result'
+    result_data = scade_response.get("result", {})
 
-    # Форматирование данных в читаемый HTML формат
+    # Если данных в 'result' нет, пытаемся извлечь из 'node_settings["axi1-start"]'
+    if not result_data:
+        result_data = scade_response.get("data", {}).get("node_settings", {}).get(Config.START_NODE_ID, {}).get("data", {})
+
+    # Извлекаем значения с использованием метода .get(), чтобы избежать KeyError
+    from_ = result_data.get("from", "N/A")
+    subject = result_data.get("subject", "N/A")
+    body = result_data.get("body", "N/A")
+    date = result_data.get("date", "N/A")
+
+    # Создание HTML-контента
     html_content = f"""
     <html>
     <head>
-        <meta charset="UTF-8">
+        <meta charset="utf-8">
         <title>Scade Result - Task ID: {task_id}</title>
     </head>
     <body>
@@ -164,11 +182,13 @@ def save_result_to_html(task_id, scade_response):
     </body>
     </html>
     """
-    filename = f"scade_result_{task_id}.html"
-    with open(filename, 'w', encoding='utf-8') as file:
-        file.write(html_content)
-    print(f"Result saved to {filename}")
 
+    # Сохранение HTML-файла с кодировкой utf-8
+    filename = f"scade_result_{task_id}.html"
+    with open(filename, "w", encoding="utf-8") as html_file:
+        html_file.write(html_content)
+
+    print(f"Result saved to {filename}")
 
 def main():
     mail = connect_to_email()
@@ -177,13 +197,11 @@ def main():
         emails = fetch_emails(mail)
         if emails:
             for email_data in emails:
-                scade_data = prepare_scade_data(email_data)
-                task_id = send_to_scade(scade_data)
+                task_id = send_to_scade(email_data)
                 if task_id:
                     print(f"Email from {email_data['from']} successfully sent to Scade API. Task ID: {task_id}")
 
-                    # Опционально: ожидаем завершения флоу и получаем результат
-                    time.sleep(5)  # Задержка перед запросом результата
+                    # Ожидаем завершения флоу и получаем результат
                     scade_response = get_scade_result(task_id)
                     if scade_response:
                         save_result_to_html(task_id, scade_response)
