@@ -2,6 +2,7 @@
 
 class Config:
     IMAP_SERVER = 'imap.yandex.ru'
+    SMTP_SERVER = 'smtp.yandex.ru'
     EMAIL_ACCOUNT = 'IBRtest@yandex.ru'
     PASSWORD = 'nmdztxyltuoxwdpl'
     CHECK_INTERVAL = 60  # Интервал проверки почты в секундах
@@ -14,3 +15,8 @@ class Config:
     API_TOKEN = "NjU2OWVhMWQtMGIwMC00MzgxLWI3ZDEtMjg1NjM4NDE5NDg4Okd1VHhldUEwd2UyMzVUZkhmS1VoSERwVWxpdXBUNA=="  # Токен для аутентификации API Scade
 
     SCADE_API_URL = f'https://api.scade.pro/api/v1/scade/flow/34096/execute'
+
+    # Настройки отправки email
+    SMTP_PORT = 587
+    SEND_FROM_EMAIL = "IBRtest@yandex.ru"
+    SEND_TO_EMAIL = "monthu56@mail.ru"
