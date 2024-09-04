@@ -137,7 +137,15 @@ def get_scade_result(task_id):
         return None
 
 
-def save_result_to_html(task_id, email_data):
+def save_result_to_html(task_id, scade_response):
+    # Извлечение нужных данных из ответа Scade
+    node_data = scade_response['data']['node_settings'][Config.START_NODE_ID]['data']
+
+    from_ = node_data.get("from", "N/A")
+    subject = node_data.get("subject", "N/A")
+    body = node_data.get("body", "N/A")
+    date = node_data.get("date", "N/A")
+
     # Форматирование данных в читаемый HTML формат
     html_content = f"""
     <html>
@@ -148,11 +156,11 @@ def save_result_to_html(task_id, email_data):
     <body>
         <h1>Scade Task Result</h1>
         <p><strong>Task ID:</strong> {task_id}</p>
-        <p><strong>От:</strong> {email_data['from']}</p>
-        <p><strong>Тема:</strong> {email_data['subject']}</p>
-        <p><strong>Дата:</strong> {email_data['date']}</p>
-        <p><strong>Содержимое:</strong></p>
-        <pre>{email_data['body']}</pre>
+        <p><strong>From:</strong> {from_}</p>
+        <p><strong>Subject:</strong> {subject}</p>
+        <p><strong>Date:</strong> {date}</p>
+        <p><strong>Body:</strong></p>
+        <pre>{body}</pre>
     </body>
     </html>
     """
@@ -176,9 +184,9 @@ def main():
 
                     # Опционально: ожидаем завершения флоу и получаем результат
                     time.sleep(5)  # Задержка перед запросом результата
-                    result = get_scade_result(task_id)
-                    if result:
-                        save_result_to_html(task_id, email_data)
+                    scade_response = get_scade_result(task_id)
+                    if scade_response:
+                        save_result_to_html(task_id, scade_response)
 
                     # Сохранение UID после успешной отправки
                     save_processed_uid(email_data['uid'])
